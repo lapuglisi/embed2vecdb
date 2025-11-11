@@ -1,0 +1,2 @@
+--embd-separator STRING                 separator of embeddings (default \n) for example "<#sep#>"
+--cls-separator STRING                  separator of classification sequences (default \t) for example
