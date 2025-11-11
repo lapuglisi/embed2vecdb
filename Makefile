@@ -19,8 +19,8 @@ all: $(TARGET)
 debug:
 	@$(MAKE) CPPFLAGS="$(CPPFLAGS) -D_DEBUG" all
 
-$(TARGET): $(OBJECTS) $(QDRANT_OBJS)
-	$(LD) -o $(TARGET) $(LDFLAGS) $(OBJECTS) $(QDRANT_OBJS)
+$(TARGET): $(OBJECTS)
+	$(LD) -o $(TARGET) $(LDFLAGS) $(OBJECTS)
 
 .cpp.o:
 	$(CPP) $(CPPFLAGS) -c $< -o $@
