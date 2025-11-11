@@ -1,3 +1,4 @@
 .clangd
 *.vim
 embed2vecdb
+**.o
