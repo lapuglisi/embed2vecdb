@@ -5,9 +5,6 @@
 #include <string>
 #include <vector>
 
-bool app_llama_generate_embeddings(std::vector<llama_token> &,
-                                   app_llama_data_t *, const std::string &);
-
 bool app_llama_tokenize(std::vector<llama_token> &, const struct llama_vocab *,
                         const std::string &, bool, bool);
 
@@ -26,5 +23,8 @@ inline void app_llama_batch_clear(llama_batch &batch)
 }
 
 void app_llama_embd_normalize(const float *, float *, int, int);
+
+std::string app_llama_token_to_piece(const struct llama_vocab *, llama_token,
+                                     bool);
 
 #endif // __EMBED2VECDB_APP_LLAMA_UTILS_H__

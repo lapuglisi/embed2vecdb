@@ -27,5 +27,50 @@ int main(int argc, char **argv)
     printf("\n");
   }
 
+  // Init app_llm
+  app_llama_data_t data;
+  if (!app_llm_init(args, &data))
+  {
+    LOG_ERR("could not initialize.\n");
+    app_llm_destroy(&data);
+
+    return -1;
+  }
+
+  llama_input_vector_t result;
+  std::string text(
+      "serominers seroclevers serowonders\nseroflatos\nserocomidas");
+
+  LOG("getting embeddings for '%s'.\n", text.c_str());
+
+  int n_prompts = app_llm_tokenize(data, text, result);
+  if (n_prompts <= 0)
+  {
+    LOG_ERR("could not tokenize the input string '%s'\n", text.c_str());
+  }
+  else
+  {
+    std::vector<float> embeddings;
+    if (!app_llm_get_embeddings(data, n_prompts, result, embeddings))
+    {
+      LOG_ERR("could not get embeddings.\n");
+    }
+    else
+    {
+      printf("\n\n");
+      for (int s = 0; s < embeddings.size(); s++)
+      {
+        printf("%.5f, ", embeddings.at(s));
+        if (s % 10 == 0)
+        {
+          printf("\n");
+        }
+      }
+      printf("\n\n");
+    }
+  }
+
+  app_llm_destroy(&data);
+
   return 0;
 }

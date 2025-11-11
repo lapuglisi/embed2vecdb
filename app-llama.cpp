@@ -1,6 +1,8 @@
 #include "app-llama.h"
+#include "llama-utils.h"
 #include "llama.h"
 #include "utils.h"
+#include <cstdint>
 #include <math.h>
 #include <string.h>
 #include <sys/sysinfo.h>
@@ -114,7 +116,7 @@ bool app_llm_init(app_llama_args_t &args, app_llama_data_t *data)
   data->model = llama_model_load_from_file(args.model.c_str(), mp);
   if (NULL == data->model)
   {
-    LOG_ERR("could not load the llama model.\n");
+    LOG_ERR("unable to load model.\n");
     return false;
   }
 
@@ -158,6 +160,9 @@ bool app_llm_init(app_llama_args_t &args, app_llama_data_t *data)
   }
 
   // Set extra values to data
+  data->n_batch = args.batch_size;
+  data->n_ubatch = args.ubatch_size;
+  data->n_seq_max = 1; // TODO: add parameter for that?
   data->embd_sep = "\n";
   data->cls_sep = "\t";
   data->embed_norm = embedding_normalize_algorithm_t::Euclidean;
@@ -190,14 +195,199 @@ bool app_llm_destroy(app_llama_data_t *data)
   return true;
 }
 
-int app_llm_tokenize(const app_llama_data_t &, const std::string &,
-                     llama_input_vector_t &)
+int app_llm_tokenize(const app_llama_data_t &data, const std::string &text,
+                     llama_input_vector_t &inputs)
 {
-  return 0;
+  llama_model *model = data.model;
+  enum llama_pooling_type pooling_type = llama_pooling_type(data.ctx);
+
+  const llama_vocab *vocab = llama_model_get_vocab(data.model);
+
+  if (NULL == vocab)
+  {
+    LOG_ERR("could not load the model's vocab\n");
+    return -1;
+  }
+
+  // split the prompt into lines
+  std::vector<std::string> prompts = split_lines(text, data.embd_sep);
+
+  // max batch size
+  const uint64_t n_batch = data.n_batch;
+
+  // get added sep and eos token, if any
+  const std::string added_sep_token =
+      llama_vocab_get_add_sep(vocab)
+          ? llama_vocab_get_text(vocab, llama_vocab_sep(vocab))
+          : "";
+  const std::string added_eos_token =
+      llama_vocab_get_add_eos(vocab)
+          ? llama_vocab_get_text(vocab, llama_vocab_eos(vocab))
+          : "";
+  const char *rerank_prompt = llama_model_chat_template(model, "rerank");
+
+  // tokenize the prompts and trim
+  for (const auto &prompt : prompts)
+  {
+    std::vector<llama_token> inp;
+
+    // split classification pairs and insert expected separator tokens
+    if (pooling_type == LLAMA_POOLING_TYPE_RANK &&
+        prompt.find(data.cls_sep) != std::string::npos)
+    {
+      std::vector<std::string> pairs = split_lines(prompt, data.cls_sep);
+      if (rerank_prompt != nullptr)
+      {
+        const std::string query = pairs[0];
+        const std::string doc = pairs[1];
+        std::string final_prompt = rerank_prompt;
+        string_replace_all(final_prompt, "{query}", query);
+        string_replace_all(final_prompt, "{document}", doc);
+
+        if (!app_llama_tokenize(inp, vocab, final_prompt, true, true))
+        {
+          LOG("warning: app_llama_tokenize failed.\n");
+        }
+      }
+      else
+      {
+        std::string final_prompt;
+        for (size_t i = 0; i < pairs.size(); i++)
+        {
+          final_prompt += pairs[i];
+          if (i != pairs.size() - 1)
+          {
+            if (!added_eos_token.empty())
+            {
+              final_prompt += added_eos_token;
+            }
+            if (!added_sep_token.empty())
+            {
+              final_prompt += added_sep_token;
+            }
+          }
+        }
+
+        app_llama_tokenize(inp, vocab, final_prompt, true, true);
+      }
+    }
+    else
+    {
+      app_llama_tokenize(inp, vocab, prompt, true, true);
+    }
+
+    if (inp.size() > n_batch)
+    {
+      LOG_ERR("number of tokens in input line (%lld) exceeds batch size "
+              "(%lld), increase batch size and re-run\n",
+              (long long int)inp.size(), (long long int)n_batch);
+      return -1;
+    }
+
+    inputs.push_back(inp);
+  }
+
+  // check if the last token is SEP/EOS
+  // it should be automatically added by the tokenizer when
+  // 'tokenizer.ggml.add_eos_token' is set to 'true'
+  for (auto &inp : inputs)
+  {
+    if (inp.empty() || (inp.back() != llama_vocab_sep(vocab) &&
+                        inp.back() != llama_vocab_eos(vocab)))
+    {
+      LOG("last token in the prompt is not SEP or EOS\n");
+      LOG("'tokenizer.ggml.add_eos_token' should be set to 'true' in "
+          "the GGUF header\n");
+    }
+  }
+
+  // tokenization stats
+  /*
+  if (params.verbose_prompt)
+  {
+    for (int i = 0; i < (int)inputs.size(); i++)
+    {
+      LOG_INF("%s: prompt %d: '%s'\n", __func__, i, prompts[i].c_str());
+      LOG_INF("%s: number of tokens in prompt = %zu\n", __func__,
+              inputs[i].size());
+      for (int j = 0; j < (int)inputs[i].size(); j++)
+      {
+        LOG("%6d -> '%s'\n", inputs[i][j],
+            common_token_to_piece(ctx, inputs[i][j]).c_str());
+      }
+      LOG("\n\n");
+    }
+  }
+  */
+
+  return prompts.size();
 }
 
-bool app_llm_get_embeddings(const app_llama_data_t &, const int,
-                            const llama_input_vector_t &, std::vector<float> &)
+bool app_llm_get_embeddings(const app_llama_data_t &data, const int n_prompts,
+                            const llama_input_vector_t &inputs,
+                            std::vector<float> &embeddings)
 {
+  // initialize batch
+  enum llama_pooling_type pooling_type = llama_pooling_type(data.ctx);
+  const int32_t n_batch = data.n_batch;
+  const int32_t n_seq_max = data.n_seq_max;
+
+  struct llama_batch batch = llama_batch_init(n_batch, 0, 1);
+
+  // count number of embeddings
+  int n_embd_count = 0;
+  if (pooling_type == LLAMA_POOLING_TYPE_NONE)
+  {
+    for (int k = 0; k < n_prompts; k++)
+    {
+      n_embd_count += inputs[k].size();
+    }
+  }
+  else
+  {
+    n_embd_count = n_prompts;
+  }
+
+  // allocate output
+  const int n_embd = llama_model_n_embd(data.model);
+
+  const size_t embd_size = n_embd_count * n_embd;
+  embeddings.resize(embd_size);
+  embeddings.assign(embd_size, 0.0);
+
+  float *emb = embeddings.data();
+
+  // break into batches
+  int e = 0; // number of embeddings already stored
+  int s = 0; // number of prompts in current batch
+  for (int k = 0; k < n_prompts; k++)
+  {
+    // clamp to n_batch tokens
+    auto &inp = inputs[k];
+
+    const uint64_t n_toks = inp.size();
+
+    // encode if at capacity
+    if (batch.n_tokens + n_toks > n_batch || s >= n_seq_max)
+    {
+      float *out = emb + e * n_embd;
+      app_llama_batch_decode(data.ctx, batch, out, s, n_embd, data.embed_norm);
+
+      e += pooling_type == LLAMA_POOLING_TYPE_NONE ? batch.n_tokens : s;
+      s = 0;
+
+      app_llama_batch_clear(batch);
+    }
+
+    // add to batch
+    // TODO: app_llama_batch_add_seq(batch, inp, s);
+    app_llama_batch_add_seq(batch, inp, s);
+    s += 1;
+  }
+
+  // final batch
+  float *out = emb + e * n_embd;
+  app_llama_batch_decode(data.ctx, batch, out, s, n_embd, data.embed_norm);
+
   return true;
 }

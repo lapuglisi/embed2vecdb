@@ -10,7 +10,7 @@ INCLUDES = -I./ -I./qdrant -I/mnt/storage/ggml-org/llama.cpp/include -I$(DEVLIBS
 
 CPPFLAGS = $(INCLUDES) -O2 -pipe -march=native -ggdb -std=c++17
 
-LDFLAGS = -L/mnt/storage/ggml-org/llama.cpp/lib -lllama
+LDFLAGS = -ggdb -L/mnt/storage/ggml-org/llama.cpp/lib -lllama
 
 TARGET = embed2vecdb
 
