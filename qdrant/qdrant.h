@@ -66,7 +66,6 @@ int qdrant_curl_callback_nop(char *, size_t, size_t, void *);
 int qdrant_curl_write_data(char *, size_t, size_t, void *);
 
 bool qdrant_init(const std::string &, qdrant_info_t *);
-void qdrant_destroy(qdrant_info_t *);
 
 bool qdrant_collection_create(const qdrant_info_t &,
                               const qdrant_colection_info_t &);
@@ -75,6 +74,7 @@ bool qdrant_collection_delete(const qdrant_info_t &,
 
 /* Points implementation */
 bool qdrant_points_insert(const qdrant_info_t &info,
-                          qdrant_point_array_t &points);
+                          const qdrant_colection_info_t &col,
+                          const qdrant_point_array_t &points);
 
 #endif // __EMBED2VECDB_QDRANT_H__

@@ -5,8 +5,10 @@
 #include "nlohmann/json_fwd.hpp"
 #include "utils.h"
 #include <cstddef>
+#include <cstring>
 #include <curl/curl.h>
 #include <curl/easy.h>
+#include <exception>
 #include <uuid/uuid.h>
 
 bool qdrant_init(const std::string &qdrant_uri, qdrant_info_t *info)
@@ -126,10 +128,9 @@ int qdrant_curl_write_data(char *buffer, size_t size, size_t nmemb,
   {
     *json = nlohmann::json::parse(buffer, nullptr, true, true);
   }
-  catch (...)
+  catch (const std::exception &e)
   {
-    LOG_ERR("could not parse the output JSON: ?\n");
-    json = NULL;
+    LOG_ERR("could not parse the output JSON: %s\n", e.what());
   }
 
   return size * nmemb;
@@ -281,9 +282,25 @@ bool qdrant_collection_delete(const qdrant_info_t &info,
 /****************************
  * points API interface
  *****************************/
+int qpi_read_data(char *buffer, size_t size, size_t nmemb, void *userdata)
+{
+  size_t total = size * nmemb;
+  if (userdata != NULL)
+  {
+    memcpy(buffer, userdata, total);
+    // LOG("buffer is '%.*s'.\n", (int)total, buffer);
+  }
+  else
+  {
+    total = 0;
+  }
+
+  return total;
+}
 
 bool qdrant_points_insert(const qdrant_info_t &info,
-                          qdrant_point_array_t &points)
+                          const qdrant_colection_info_t &col,
+                          const qdrant_point_array_t &points)
 {
   nlohmann::json data;
   nlohmann::json itens = nlohmann::json::array();
@@ -292,8 +309,13 @@ bool qdrant_points_insert(const qdrant_info_t &info,
   {
     nlohmann::json item;
     item["id"] = point.id;
-    item["payload"] = {point.payload_x, point.payload_y};
-    item["vector"] = point.vector;
+    item["payload"][point.payload_x] = point.payload_y;
+    item["vector"] = nlohmann::json::array();
+
+    for (auto &vec : point.vector)
+    {
+      item["vector"].push_back(vec);
+    }
 
     itens.push_back(item);
   }
@@ -301,7 +323,7 @@ bool qdrant_points_insert(const qdrant_info_t &info,
 
   std::string json = nlohmann::to_string(data);
 
-  LOG("to send '%s' to API.\n", json.c_str());
+  LOG_ERR("to send '%s' to API.\n", json.c_str());
 
   CURLcode res = curl_global_init(CURL_GLOBAL_ALL);
   if (res != CURLE_OK)
@@ -320,12 +342,43 @@ bool qdrant_points_insert(const qdrant_info_t &info,
   }
   else
   {
+    nlohmann::json result;
+
     std::string url(info.URI);
+    std::string path(QDRANT_POINTS_INSERT_PATH);
+    string_replace_all(path, "{collection_name}", col.name);
+
+    url.append(path);
+
+    LOG("sending payload to '%s'.\n", url.c_str());
+    LOG("json length is %ld.\n", json.length());
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
-    // curl_easy_setopt(curl, CURLOPT_READDATA, NULL);
-    // curl_easy_setopt(curl, CURLOPT_READFUNCTION, qpi_read_data);
+    curl_easy_setopt(curl, CURLOPT_READDATA, json.c_str());
+    curl_easy_setopt(curl, CURLOPT_READFUNCTION, qpi_read_data);
+    curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, json.length());
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &result);
+    curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, qdrant_curl_write_data);
+
+    struct curl_slist *headers = NULL;
+    headers = curl_slist_append(headers, "Content-Type: application/json");
+
+    res = curl_easy_perform(curl);
+    if (res == CURLE_OK)
+    {
+      std::string result_string = nlohmann::to_string(result);
+      LOG("got return json: %s\n", result_string.c_str());
+    }
+    else
+    {
+      LOG_ERR("curl_easy_perform failed.\n");
+    }
+
+    if (headers != NULL)
+    {
+      curl_slist_free_all(headers);
+    }
   }
 
   curl_global_cleanup();

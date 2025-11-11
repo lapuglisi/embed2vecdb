@@ -47,18 +47,8 @@ int main(int argc, char **argv)
     return -1;
   }
 
-  qdrant_point_array_t points;
-  points.push_back({.id = generate_uuid(),
-                    .payload_x = "key",
-                    .payload_y = "value",
-                    .vector = {1, 1, 1, 1}});
-
-  qdrant_points_insert(info, points);
-  return 0;
-
   llama_input_vector_t result;
-  std::string text(
-      "serominers seroclevers serowonders\nseroflatos\nserocomidas");
+  std::string text("serominers sao brasileiros");
 
   LOG("getting embeddings for '%s'.\n", text.c_str());
 
@@ -76,20 +66,23 @@ int main(int argc, char **argv)
     }
     else
     {
-      printf("\n\n");
-      for (int s = 0; s < embeddings.size(); s++)
-      {
-        printf("%.5f, ", embeddings.at(s));
-        if (s % 10 == 0)
-        {
-          printf("\n");
-        }
-      }
-      printf("\n\n");
+      qdrant_colection_info_t col;
+      col.name = "serominers";
+
+      qdrant_point_array_t points;
+      qdrant_point_spec_t point;
+
+      point.id = generate_uuid();
+      point.payload_x = "sero";
+      point.payload_y = "miners";
+      point.vector.assign(embeddings.begin(), embeddings.end());
+
+      points.push_back(point);
+
+      qdrant_points_insert(info, col, points);
     }
   }
 
-  qdrant_destroy(&info);
   app_llm_destroy(&data);
 
   return 0;
