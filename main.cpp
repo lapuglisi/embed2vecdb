@@ -1,6 +1,8 @@
 #include "app-llama.h"
+#include "qdrant.h"
 #include "utils.h"
 #include <stdio.h>
+#include <uuid/uuid.h>
 
 int main(int argc, char **argv)
 {
@@ -37,6 +39,23 @@ int main(int argc, char **argv)
     return -1;
   }
 
+  // Test for qdrant connection
+  qdrant_info_t info;
+  if (!qdrant_init(args.qdrant_uri, &info))
+  {
+    LOG_ERR("qdrant_init failed.\n");
+    return -1;
+  }
+
+  qdrant_point_array_t points;
+  points.push_back({.id = generate_uuid(),
+                    .payload_x = "key",
+                    .payload_y = "value",
+                    .vector = {1, 1, 1, 1}});
+
+  qdrant_points_insert(info, points);
+  return 0;
+
   llama_input_vector_t result;
   std::string text(
       "serominers seroclevers serowonders\nseroflatos\nserocomidas");
@@ -70,6 +89,7 @@ int main(int argc, char **argv)
     }
   }
 
+  qdrant_destroy(&info);
   app_llm_destroy(&data);
 
   return 0;

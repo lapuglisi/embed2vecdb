@@ -1,6 +1,19 @@
 #include "utils.h"
 #include <string>
+#include <uuid/uuid.h>
 #include <vector>
+
+std::string generate_uuid()
+{
+  uuid_t uuid;
+  char uuid_string[36 + 1] = {0x00};
+
+  uuid_generate(uuid);
+
+  uuid_unparse_lower(uuid, uuid_string);
+
+  return std::string(uuid_string);
+}
 
 std::vector<std::string> split_lines(const std::string &source,
                                      const std::string &sep)

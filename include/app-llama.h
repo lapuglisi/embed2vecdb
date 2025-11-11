@@ -2,16 +2,11 @@
 #ifndef _EMBED2VECDB_APP_LLAMA_H_
 #define _EMBED2VECDB_APP_LLAMA_H_
 
-#include <sys/types.h>
-#pragma once
-
 #include "llama.h"
 #include <cstdint>
 #include <string>
+#include <sys/types.h>
 #include <vector>
-
-// TODO: Add it to the qdrant interface
-const std::string QdrandDefaultUri = "localhost:6333";
 
 typedef enum _embed_norm_algo
 {
@@ -43,6 +38,7 @@ typedef struct _app_llama_data
   int32_t n_ubatch;
   int32_t n_seq_max;
   int32_t embed_norm;
+  int32_t model_n_embed;
 } app_llama_data_t;
 
 typedef std::vector<std::vector<int32_t>> llama_input_vector_t;

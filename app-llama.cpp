@@ -1,7 +1,7 @@
 #include "app-llama.h"
 #include "llama-utils.h"
 #include "llama.h"
-#include "utils.h"
+#include "qdrant.h"
 #include <cstdint>
 #include <math.h>
 #include <string.h>
@@ -32,7 +32,7 @@ bool app_parse_args(int argc, char **argv, app_llama_args_t *args)
 	args->threads = 0;
 	args->verbose = false;
 	args->n_gpu_layers = 0;
-	args->qdrant_uri.assign(QdrandDefaultUri);
+	args->qdrant_uri.assign(QDRANT_DEFAULT_URI);
 
   for (int i = 1; i < argc; i++)
   {
@@ -166,6 +166,7 @@ bool app_llm_init(app_llama_args_t &args, app_llama_data_t *data)
   data->embd_sep = "\n";
   data->cls_sep = "\t";
   data->embed_norm = embedding_normalize_algorithm_t::Euclidean;
+  data->model_n_embed = llama_model_n_embd(data->model);
 
   return true;
 }

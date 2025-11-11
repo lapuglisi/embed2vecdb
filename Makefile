@@ -1,16 +1,17 @@
 CPP = g++
 LD = g++
 
-SOURCES = main.cpp app-llama.cpp utils.cpp llama-utils.cpp
+SOURCES = main.cpp app-llama.cpp utils.cpp llama-utils.cpp $(wildcard qdrant/*.cpp)
 OBJECTS = $(SOURCES:.cpp=.o)
 
+LLAMACPP_ROOT = /mnt/development/ggml-org/llama.cpp
 DEVLIBS_ROOT = /mnt/storage/dev/libs
 
-INCLUDES = -I./ -I./qdrant -I/mnt/storage/ggml-org/llama.cpp/include -I$(DEVLIBS_ROOT)/include
+INCLUDES = -I./include -I./qdrant -I$(LLAMACPP_ROOT)/include -I$(DEVLIBS_ROOT)/include
 
 CPPFLAGS = $(INCLUDES) -O2 -pipe -march=native -ggdb -std=c++17
 
-LDFLAGS = -ggdb -L/mnt/storage/ggml-org/llama.cpp/lib -lllama
+LDFLAGS = -ggdb -L$(LLAMACPP_ROOT)/lib -L$(DEVLIBS_ROOT)/lib -lllama -lcurl -luuid
 
 TARGET = embed2vecdb
 
@@ -33,4 +34,3 @@ clean:
 
 purge: clean
 	@rm -fv $(TARGET)
-
