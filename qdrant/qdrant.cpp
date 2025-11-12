@@ -1,18 +1,15 @@
 #include "qdrant.h"
-#include "curl/system.h"
-#include "nlohmann/detail/conversions/from_json.hpp"
+#include "curl/curl.h"
 #include "nlohmann/json.hpp"
-#include "nlohmann/json_fwd.hpp"
 #include "utils.h"
-#include <cstddef>
+#include <cstdlib>
 #include <cstring>
-#include <curl/curl.h>
-#include <curl/easy.h>
 #include <exception>
 #include <uuid/uuid.h>
 
 bool qdrant_init(const std::string &qdrant_uri, qdrant_info_t *info)
 {
+  bool success = true;
   if (NULL == info)
   {
     LOG_ERR("argument 'info' is NULL.\n");
@@ -33,6 +30,7 @@ bool qdrant_init(const std::string &qdrant_uri, qdrant_info_t *info)
   if (NULL == curl)
   {
     LOG_ERR("curl_easy_init failed.\n");
+    curl_global_cleanup();
     return false;
   }
 
@@ -43,20 +41,17 @@ bool qdrant_init(const std::string &qdrant_uri, qdrant_info_t *info)
   curl_easy_setopt(curl, CURLOPT_NOPROGRESS, 1L);
 
   res = curl_easy_perform(curl);
-  if (res != CURLE_OK)
+  success = (CURLE_OK == res);
+
+  if (!success)
   {
     LOG_ERR("qdrant is ofline.\n");
-
-    curl_global_cleanup();
-    curl_easy_cleanup(curl);
-
-    return false;
   }
 
   curl_easy_cleanup(curl);
   curl_global_cleanup();
 
-  return true;
+  return success;
 }
 
 std::string qdrant_get_distance(qdrant_distance_type_t distance)
@@ -87,7 +82,7 @@ std::string qdrant_get_distance(qdrant_distance_type_t distance)
   }
   default:
   {
-    LOG("warning: unknow direction %d,. using default 'Cosine'.\n", distance);
+    LOG("warning: unknow distance %d,. using default 'Cosine'.\n", distance);
     param = "Cosine";
     break;
   }
@@ -99,41 +94,53 @@ std::string qdrant_get_distance(qdrant_distance_type_t distance)
 /***
  *** CURL related
  ***/
-int qdrant_curl_callback_nop(char *b, size_t s, size_t n, void *u)
+int qdrant_curl_callback_nop(char *, size_t s, size_t n, void *)
 {
   return s * n;
 }
 
 int qcc_read_data(char *buffer, size_t size, size_t nmemb, void *userdata)
 {
-  LOG("size is %ld, nmemb is %ld\n", size, nmemb);
-  LOG("userdata is %p | %s\n", userdata, (char *)userdata);
-  memcpy(buffer, userdata, size * nmemb);
+  const size_t total = size * nmemb;
+  const char *udata = reinterpret_cast<const char *>(userdata);
+  if (NULL == udata)
+  {
+    return 0;
+  }
 
-  return size * nmemb;
+  LOG("size is %ld, nmemb is %ld\n", size, nmemb);
+  LOG("userdata is %p | %s\n", userdata, udata);
+  memcpy(buffer, udata, total);
+
+  return total;
 }
 
 int qdrant_curl_write_data(char *buffer, size_t size, size_t nmemb,
                            void *userdata)
 {
-  nlohmann::json *json = reinterpret_cast<nlohmann::json *>(userdata);
-  if (json == NULL)
+  curl_write_data_t *data = reinterpret_cast<curl_write_data_t *>(userdata);
+  if (NULL == data)
   {
     return 0;
   }
 
-  LOG("buffer is '%.*s'\n", strlen(buffer), buffer);
-
-  try
+  size_t total = size * nmemb;
+  if (data->pointer_len < total)
   {
-    *json = nlohmann::json::parse(buffer, nullptr, true, true);
+    // Must realloc data
+    data->pointer_len = total;
+    data->pointer = realloc(data->pointer, total);
   }
-  catch (const std::exception &e)
+  else
   {
-    LOG_ERR("could not parse the output JSON: %s\n", e.what());
+    // pointer_len >= total
+    data->pointer_len = total;
   }
 
-  return size * nmemb;
+  memset(data->pointer, 0x00, data->pointer_len);
+  memcpy(data->pointer, buffer, total);
+
+  return total;
 }
 
 bool qdrant_collection_create(const qdrant_info_t &info,
@@ -190,9 +197,9 @@ bool qdrant_collection_create(const qdrant_info_t &info,
     curl_easy_setopt(curl, CURLOPT_READDATA, data.c_str());
     curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, (curl_off_t)data.length());
 
-    nlohmann::json json;
+    curl_write_data_t *data = qdrant_malloc_write_data();
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, qdrant_curl_write_data);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &json);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, data);
 
     res = curl_easy_perform(curl);
     if (res != CURLE_OK)
@@ -200,8 +207,14 @@ bool qdrant_collection_create(const qdrant_info_t &info,
       success = false;
       LOG_ERR("curl_easy_perform failed: %d.\n", res);
     }
+    else
+    {
+      LOG("got result length ... %ld\n", data->pointer_len);
+      LOG("got result string ... '%.*s'\n", data->pointer_len,
+          (char *)data->pointer);
+    }
 
-    LOG("success: json is '%s'", nlohmann::to_string(json).c_str());
+    free_write_data(data);
 
     if (headers)
     {
@@ -250,9 +263,9 @@ bool qdrant_collection_delete(const qdrant_info_t &info,
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_CUSTOMREQUEST, "DELETE");
 
-    nlohmann::json return_json;
+    curl_write_data_t *data = qdrant_malloc_write_data();
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, qdrant_curl_write_data);
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &return_json);
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, data);
 
     res = curl_easy_perform(curl);
     if (res != CURLE_OK)
@@ -262,8 +275,12 @@ bool qdrant_collection_delete(const qdrant_info_t &info,
     }
     else
     {
-      LOG("success: %s\n", nlohmann::to_string(return_json).c_str());
+      LOG("got result length ... %ld\n", data->pointer_len);
+      LOG("got result string ... %.*s\n", data->pointer_len,
+          (char *)data->pointer);
     }
+
+    free_write_data(data);
 
     if (headers)
     {
@@ -321,9 +338,8 @@ bool qdrant_points_insert(const qdrant_info_t &info,
   }
   data["points"] = itens;
 
-  std::string json = nlohmann::to_string(data);
-
-  LOG_ERR("to send '%s' to API.\n", json.c_str());
+  std::string data_json = nlohmann::to_string(data);
+  // LOG_ERR("to send '%s' to API.\n", data_json.c_str());
 
   CURLcode res = curl_global_init(CURL_GLOBAL_ALL);
   if (res != CURLE_OK)
@@ -351,14 +367,17 @@ bool qdrant_points_insert(const qdrant_info_t &info,
     url.append(path);
 
     LOG("sending payload to '%s'.\n", url.c_str());
-    LOG("json length is %ld.\n", json.length());
+    LOG("json length is %ld.\n", data_json.length());
 
     curl_easy_setopt(curl, CURLOPT_URL, url.c_str());
     curl_easy_setopt(curl, CURLOPT_UPLOAD, 1L);
-    curl_easy_setopt(curl, CURLOPT_READDATA, json.c_str());
+    curl_easy_setopt(curl, CURLOPT_READDATA, data_json.c_str());
     curl_easy_setopt(curl, CURLOPT_READFUNCTION, qpi_read_data);
-    curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, json.length());
-    curl_easy_setopt(curl, CURLOPT_WRITEDATA, &result);
+    curl_easy_setopt(curl, CURLOPT_INFILESIZE_LARGE, data_json.length());
+
+    curl_write_data_t *data = qdrant_malloc_write_data();
+
+    curl_easy_setopt(curl, CURLOPT_WRITEDATA, data);
     curl_easy_setopt(curl, CURLOPT_WRITEFUNCTION, qdrant_curl_write_data);
 
     struct curl_slist *headers = NULL;
@@ -367,13 +386,16 @@ bool qdrant_points_insert(const qdrant_info_t &info,
     res = curl_easy_perform(curl);
     if (res == CURLE_OK)
     {
-      std::string result_string = nlohmann::to_string(result);
-      LOG("got return json: %s\n", result_string.c_str());
+      char *json = reinterpret_cast<char *>(data->pointer);
+      LOG("got return length ... %ld\n", data->pointer_len);
+      LOG("got return string ... %.*s\n", data->pointer_len, json);
     }
     else
     {
       LOG_ERR("curl_easy_perform failed.\n");
     }
+
+    free_write_data(data);
 
     if (headers != NULL)
     {

@@ -2,3 +2,4 @@
 *.vim
 embed2vecdb
 **.o
+*.log

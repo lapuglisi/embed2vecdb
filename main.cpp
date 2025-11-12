@@ -47,6 +47,20 @@ int main(int argc, char **argv)
     return -1;
   }
 
+  // test delete collection / create collection
+  qdrant_colection_info_t col;
+  col.name = "serominers";
+  col.size = llama_model_n_embd(data.model);
+  col.distance = qdrant_distance_type_t::Cosine;
+
+  qdrant_collection_delete(info, col)
+      ? LOG("qdrant_collection_delete succeeded\n")
+      : LOG_ERR("qdrant_collection_delete failed.\n");
+
+  qdrant_collection_create(info, col)
+      ? LOG("qdrant_collection_create succeeded\n")
+      : LOG_ERR("qdrant_collection_create failed.\n");
+
   llama_input_vector_t result;
   std::string text("serominers sao brasileiros");
 

@@ -60,6 +60,44 @@ typedef struct _qdrant_point_spec
   std::vector<float> vector;
 } qdrant_point_spec_t;
 
+#define QDRANT_WRITE_DATA_SIZE 1024
+
+typedef struct _curl_write_data
+{
+  void *pointer;
+  size_t pointer_len;
+} curl_write_data_t;
+
+inline curl_write_data_t *qdrant_malloc_write_data(size_t dsize = 512)
+{
+  curl_write_data_t *data = (curl_write_data_t *)malloc(
+      QDRANT_WRITE_DATA_SIZE * sizeof(curl_write_data_t));
+
+  if (data != NULL)
+  {
+    data->pointer_len = dsize;
+    data->pointer = malloc(data->pointer_len);
+  }
+
+  return data;
+}
+
+inline void free_write_data(curl_write_data_t *data)
+{
+  if (data != NULL)
+  {
+    if (data->pointer != NULL)
+    {
+      LOG("freeing [curl_write_data_t*]->pointer.\n");
+      free(data->pointer);
+      data->pointer = NULL;
+    }
+
+    LOG("freeing [curl_write_data_t*].\n");
+    free(data);
+  }
+}
+
 typedef std::vector<qdrant_point_spec_t> qdrant_point_array_t;
 
 int qdrant_curl_callback_nop(char *, size_t, size_t, void *);
